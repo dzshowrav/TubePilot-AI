@@ -1,13 +1,15 @@
 # TubePilot AI — Product Requirements Document (PRD)
 
-**Version:** 1.0 · **Status:** Draft for review · **Date:** 2026-09-08
+**Version:** 1.1 · **Status:** Product draft; gateway transport foundation implemented · **Date:** 2026-09-08
 **Author:** TubePilot AI product team
 **Source:** 62-point feature architecture ("Complete Professional Feature Architecture")
 **Language:** English (বাংলা retained where the original spec is in Bengali)
 
-> **How to read this document.** This PRD takes the original 62-point spec, validates it, closes
-> gaps, resolves contradictions, and hardens the legal/policy wording. Every requirement is traced
-> to its source feature (see Appendix A). Decisions that still need input are listed in §13.
+> **How to read this document.** This PRD refines the original 62-point spec and records both
+> adopted requirements and unresolved release gates. It is not proof that APIs, policies or product
+> acceptance criteria have been validated in production. Source features map through Appendix A.
+> The implemented gateway foundation and remaining integration work are detailed in
+> [`AI_GATEWAY.md`](./AI_GATEWAY.md); all application-level acceptance criteria remain pending.
 
 ---
 
@@ -126,7 +128,7 @@ feature (1–62) → capability → phase.
 |---|---|---|---|
 | C1 | **Account, Auth & Security** | 42 | 1 |
 | C2 | **YouTube Integration** | 43 | 1 |
-| C3 | **Dashboard & AI Daily Brief** | 2, 30, 31 | 1 |
+| C3 | **Dashboard & AI Daily Brief** | 2, 30, 31 | 1 dashboard / 2 alerts / 3 brief |
 | C4 | **Trend Radar & Velocity** | 3, 4, 6 | 1 |
 | C5 | **Opportunity & Viral Score** | 5, 40 | 1 |
 | C6 | **Channel Analyzer & DNA** | 7, 8, 9 | 1 |
@@ -135,11 +137,11 @@ feature (1–62) → capability → phase.
 | C9 | **Scripting (Script + Hooks)** | 14, 15 | 1 |
 | C10 | **Packaging (Title, SEO, Thumbnail, A/B)** | 16, 17, 18, 19, 20 | 1/2/4 |
 | C11 | **Shorts Studio & Converter** | 21, 22 | 2 |
-| C12 | **Planning (Calendar, Publish Planner, Workflow)** | 23, 24, 38, 59 | 2 |
-| C13 | **Post-Publish Analytics** | 25, 26, 27, 28 | 2 |
-| C14 | **AI Growth Agent & Missions** | 29, 60, 61 | 3 |
-| C15 | **Localization, Monetization & Sponsorship** | 32, 33, 34 | 4 |
-| C16 | **Platform (Knowledge, Voice, Policy, Admin, Billing)** | 35, 36, 37, 39, 50, 51, 52, 53 | 1–4 |
+| C12 | **Planning (Calendar, Publish Planner, Workflow)** | 23, 24, 38, 59 | 1 saved drafts / 2 full workflow |
+| C13 | **Post-Publish Analytics** | 25, 26, 27, 28 | 1 basic / 2 advanced |
+| C14 | **AI Growth Agent & Missions** | 29, 41, 45, 60, 61 | 2 recommendations/workflow / 3 agent / 4 missions/learning |
+| C15 | **Localization, Monetization & Sponsorship** | 32, 33, 34 | 2 monetization / 4 advanced |
+| C16 | **Platform (Gateway, Knowledge, Voice, Policy, Admin, Billing)** | 35, 36, 37, 39, 44, 50, 51, 52, 53 | 1 foundation / 2–4 extensions |
 
 > **Note on navigation.** The spec's two navigation models (bottom-nav of 5 + a Create Hub of 7
 > tools) are reconciled as: **5 bottom tabs — Home · Trends · Create · Analytics · AI** — where
@@ -158,10 +160,11 @@ Each requirement lists source features, functional requirements, and acceptance 
 - Email + Google sign-in. Session management with refresh/rotation.
 - Device management and **"Log out all devices"**.
 - Permissions model: user-level roles (owner/member) for Agency tier.
-- **OAuth token handling:** YouTube OAuth access/refresh tokens must **never** be stored in
-  plaintext in local storage or the DB. Access tokens live in memory (or platform secure storage);
-  refresh tokens are stored **encrypted at rest** in the backend token vault. Local client cache
-  uses Android/iOS Keystore/Keychain. *(Hard requirement.)*
+- **Token boundaries:** YouTube access tokens stay in backend memory; YouTube refresh tokens are
+  encrypted in the backend vault. AI provider keys are also backend-only. The device stores only
+  TubePilot authentication/session credentials using Keystore/Keychain, including a rotating app
+  refresh credential if required by the chosen auth solution. Never put any secret in ordinary
+  local storage, AsyncStorage, logs or a plaintext DB field. *(Hard requirement.)*
 
 **AC**
 - [ ] Signing in with Google and email both work; sessions survive app restart.
@@ -173,16 +176,22 @@ Each requirement lists source features, functional requirements, and acceptance 
 **Requirements**
 - **YouTube OAuth** with least-privilege scopes, requested incrementally and explained in plain
   language *before* consent:
-  - Read-only analytics (channel/video metrics) — YouTube Analytics API (youtube.readonly / yt-analytics).
+  - Read-only analytics — use exact, verified scopes such as
+    `https://www.googleapis.com/auth/youtube.readonly` and
+    `https://www.googleapis.com/auth/yt-analytics.readonly` for the chosen reports.
+    Monetary reports additionally require `yt-analytics-monetary.readonly` when needed;
+    `yt-analytics` alone is not a scope identifier.
   - Read-only content (playlists, videos list) — needed for analyzer.
   - Publish (videos.insert) — **only** when the user actively uses the Publish Planner; never bundled
     into first sign-in. *(Gap G-05, G-11.)*
-- Respect YouTube quota: cache aggressively (§TECHNICAL_ARCHITECTURE §8); the default project quota
-  is 10,000 units/day, with `search.list` and `videos.insert` in separate daily buckets; quota
-  resets midnight Pacific. Plan for a quota-extension application before GA.
+- Respect YouTube quota: the documented defaults are **100 `search.list` calls/day**,
+  **100 `videos.insert` calls/day**, and **10,000 units/day for other endpoints combined**.
+  Check the actual project allocation; quota resets midnight Pacific. Budget each bucket separately,
+  cache from Phase 1, and obtain required extensions before traffic exceeds capacity (§9.2).
 - **Publishing capability is limited to what YouTube officially supports** via `videos.insert`
-  (resumable upload). Shorts upload works through the same endpoint (vertical, <60s, `#Shorts`),
-  but classification is YouTube's — we present it as "upload as Short," not "guaranteed Short."
+  (resumable upload). Current new-upload Shorts guidance includes square or vertical videos up to
+  **three minutes**; `#Shorts` is not a substitute for eligibility checks. Classification remains
+  YouTube's. Present "upload as Short," not a classification or monetization guarantee (§15 sources).
 
 **AC**
 - [ ] Connecting a channel shows the exact scopes and why, before Google consent.
@@ -240,6 +249,12 @@ Each requirement lists source features, functional requirements, and acceptance 
   Audience Fit + Content Gap + Packaging Strength + Competition + Freshness. Weights are
   configurable and visible in "Why this score?".
 - **Every score screen shows:** "Prediction, not a guarantee" + the factors + confidence level.
+- **Launch gate:** API-derived metrics require the applicable YouTube analytics-use-case approval
+  (§9.2). A disclaimer does not grant permission to calculate them.
+- **Score contract:** version the formula, weights, normalization, evidence timestamps and
+  confidence method. Unsupported inputs (including Phase 2 competitor/gap signals during MVP)
+  are omitted with an explicit reduced-coverage label; never generated by an LLM as fake metrics.
+  Validate against held-out outcomes before claiming predictive value.
 
 **AC**
 - [ ] Any score is expandable to show contributing factors and their weights.
@@ -341,13 +356,13 @@ Each requirement lists source features, functional requirements, and acceptance 
 ### C11 — Shorts Studio & Converter *(src: 21, 22)*
 
 **Requirements**
-- Shorts Studio: viral topic discovery, hook generation, 15/30/45/60s structure, script, caption,
+- Shorts Studio: opportunity discovery, hook generation, 15/30/45/60/90/180s presets, script, caption,
   title, description, hashtags, loop ending, retention structure.
 - Shorts-to-Long converter: "Turn this Short into a 7-minute video" → full outline, script, title,
   thumbnail concept, CTA.
 
 **AC**
-- [ ] Duration selector drives structure length (15/30/45/60s).
+- [ ] Duration selector drives structure length (15/30/45/60/90/180s); platform eligibility is checked separately.
 - [ ] Loop-ending suggestions are included for retention.
 - [ ] Converter asks for target length and produces an outline + script + packaging.
 
@@ -373,8 +388,12 @@ Each requirement lists source features, functional requirements, and acceptance 
 ### C13 — Post-Publish Analytics *(src: 25, 26, 27, 28)*
 
 **Requirements**
-- **Post-Publish Analyzer:** compare at 1h, 6h, 24h, 48h, 7d against the channel's typical early
-  performance.
+- **Post-Publish Analyzer:** compare available observations at 1h, 6h, 24h, 48h, 7d against
+  comparable channel baselines. Early windows require scheduled timestamped snapshots for supported
+  counters; delayed analytics are not presented as real-time data.
+- Maintain a metric-to-API/scope/granularity/availability matrix before release, especially for CTR,
+  returning viewers, revenue and retention. Display unavailable/stale/insufficient-data states;
+  a value visible in YouTube Studio is not proof of API availability.
 - **Video Health Score:** CTR, retention, engagement, topic demand, velocity → overall 0–100.
 - **Retention Doctor:** detect the largest retention drop ("⚠️ Major drop at 00:43") and give a
   specific, plain-language fix ("start this section with the payoff").
@@ -383,7 +402,8 @@ Each requirement lists source features, functional requirements, and acceptance 
 
 **AC**
 - [ ] Analyzer states which comparison window is being used (1h/6h/24h/48h/7d).
-- [ ] Retention Doctor cites the exact timestamp and the metric (e.g. retention fell X%).
+- [ ] Retention Doctor cites the available segment/time range and metric (e.g. retention fell X%);
+  bucketed API observations are not presented as exact second-level measurements.
 - [ ] Comment classification shows counts per category and example comments (anonymized).
 
 ### C14 — AI Growth Agent, Missions & Continuous Learning *(src: 29, 60, 61)*
@@ -422,7 +442,7 @@ Each requirement lists source features, functional requirements, and acceptance 
 - [ ] Revenue metrics show "not available" state when the channel isn't monetized/authorized.
 - [ ] Sponsorship templates include a disclosure reminder.
 
-### C16 — Platform: Knowledge, Voice, Policy, Search, Admin, Billing *(src: 35, 36, 37, 39, 50, 51, 52, 53)*
+### C16 — Platform: Gateway, Knowledge, Voice, Policy, Search, Admin, Billing *(src: 35, 36, 37, 39, 44, 50, 51, 52, 53)*
 
 **Requirements**
 - **AI Knowledge Base:** user uploads brand guidelines, scripts, past videos, content notes,
@@ -437,7 +457,10 @@ Each requirement lists source features, functional requirements, and acceptance 
 - **Admin Dashboard:** users (list, plan, usage, status), AI (token usage, cost, requests, errors,
   provider performance), system (API health, queue, DB, error logs), business (free/pro/premium,
   revenue, conversion). Access restricted to admin role; PII minimized.
-- **Subscription & Credits** *(§7.14):* plan enforcement + credit metering + reports.
+- **Subscription & Credits** *(§7.14):* Phase 1 hard limits and usage accounting; paid plans/reports later.
+- **AI Gateway** *(src: 44, §7.15):* OpenAI-compatible chat completions, default Hugging Face
+  Inference Router, server-managed credentials/model registry, vision-capability gating, safe
+  JSON/SSE responses, per-task cancellation and bounded rate-limit handling.
 
 **AC**
 - [ ] Knowledge-base documents are deletable and never leak across accounts.
@@ -457,15 +480,56 @@ Each requirement lists source features, functional requirements, and acceptance 
 | **Agency** | P4 | Multiple channels, team members, white-label/reporting |
 
 **Credit model (proposed, configurable):** Script 5 · Research 3 · Thumbnail 10 · Deep Analysis 15.
-Free tier gets a daily + monthly limit; overage handling and plan upgrade prompts are defined
-before GA. *(Open question O-03.)*
+Daily/monthly **hard spending caps and transactional reservation/settlement are Phase 1 gates**
+before enabling real inference. Concurrent tasks cannot overspend a shared balance. Missing usage
+is unknown, not zero; failed/cancelled/ambiguous calls follow a disclosed reconciliation/refund
+policy. Paid-plan upgrades may follow in Phase 3. *(Open question O-03; AI_GATEWAY §8.)*
+
+---
+
+### 7.15 AI Gateway System *(src: 44; Phase 1 foundation)*
+
+**Requirements**
+- Adopt an OpenAI-compatible `/chat/completions` transport, defaulting to the Hugging Face router.
+  Feature services (ideas/scripts/titles/assistant) call the backend package, never provider APIs
+  from the device. Image generation/embeddings/tool execution use later, separate adapters.
+- Backend-only API keys from a secret manager. Custom base URLs and models are operator-approved,
+  capability-validated and audited. Client preferences may store an enabled model alias and safe
+  generation settings, not credentials or trusted system directives.
+- Model selection respects user plan, feature, modality, context/output limits and approved provider
+  processing terms. Reference model names do not guarantee current availability.
+- Pack Channel DNA/Brand Voice/research as authorized context. Token-budget history by complete
+  turns; bound attachment size/count; preserve the latest user request or return a context error.
+- Support JSON and SSE modes with normalized events and nullable input/output/total usage. A
+  truncated, malformed, cancelled or interrupted response is not a completed production package.
+- Use provider-supported reasoning effort where available; never request or display private
+  chain-of-thought. Provide concise explanations, evidence and uncertainty instead.
+- Isolate cancellation per task, honor deadlines and valid Retry-After hints, and never replay an
+  accepted/partial/ambiguous generation automatically. Model switching starts a new task.
+- Moderate input/output and validate feature output schemas at the host service before exposing
+  results. The transport package alone does not implement these trust gates.
+
+**AC**
+- [ ] No provider secret is present in client bundles, persisted client state, URLs or logs.
+- [ ] Enabled model catalog is filtered by plan/feature; unsupported settings/images fail preflight.
+- [ ] JSON and streaming generations retain model/provider attribution and known/unknown usage.
+- [ ] Unicode, split SSE events, final frames, provider failures and partial output are covered by tests.
+- [ ] Concurrent jobs have independent cancellation; reconnecting does not create duplicate calls.
+- [ ] Usage reservation is atomic, retries are idempotent at the task boundary, and missing usage
+  cannot bypass free-tier caps.
+- [ ] API task reads/events/cancel and uploaded context/assets pass cross-tenant authorization tests.
+- [ ] Streamed text passes the host moderation gate before display; full results pass schema checks.
+
+**Implementation note:** the transport and mocked unit tests exist in `packages/ai-gateway`.
+End-to-end acceptance above requires the planned API, worker, billing, moderation and mobile layers.
+See [`AI_GATEWAY.md`](./AI_GATEWAY.md) for exact contracts and remaining release gates.
 
 ---
 
 ## 8. Gap Analysis & Validation Findings
 
-The original spec is strong and unusually well-scoped. These are the material gaps, contradictions,
-and risks found during review, with resolutions.
+These are material gaps, contradictions and risks with adopted design responses. An adopted
+response is not evidence that the implementation or an external approval is complete.
 
 | ID | Type | Finding | Recommendation (adopted) |
 |---|---|---|---|
@@ -473,7 +537,7 @@ and risks found during review, with resolutions.
 | G-02 | Gap | **Empty/error/loading states** not specified for a data-heavy app. | Define skeleton loading, empty states ("connect channel", "no trends yet"), and offline/error banners as a UX standard (§10). |
 | G-03 | Contradiction | §7 "one place" strategy vs §50 admin + §54 "not a website" — IA ambiguity between bottom-nav and Create Hub. | Reconciled: 5 bottom tabs + Create Hub fan-out (R-01, §6). |
 | G-04 | Risk | **Trend data source undefined.** "Trend Sources" are mentioned but never specified; scraping YouTube is a ToS violation. | Use only official/authorized sources: Google Trends API (unofficial endpoints flagged), YouTube Data API `search.list` (own quota bucket), public RSS/news, and licensed third-party trend APIs. Never scrape. *(§TECHNICAL_ARCHITECTURE §8.)* |
-| G-05 | Risk | **Publishing scope under-specified.** YouTube Data API `videos.insert` allows upload but quota-limited; Shorts classification is YouTube's. | Publish only via official `videos.insert`; label as "upload as Short"; apply for quota extension before GA; treat publish as opt-in scope (C2). |
+| G-05 | Risk | **Publishing scope under-specified.** YouTube Data API `videos.insert` allows upload but quota-limited; Shorts classification is YouTube's. | Publish only via official `videos.insert`; label as "upload as Short"; obtain required capacity before exceeding the project allocation; treat publish as opt-in scope (C2). |
 | G-06 | Contradiction | §20 hedges A/B correctly but could still read as "app runs experiments." | Hard rule added: app never runs YouTube experiments; it estimates and directs users to YouTube **Test & Compare** (native thumbnail/title A/B, up to 3 variants, long-form only, requires Advanced Features). |
 | G-07 | Gap | **Cold start** for Analyzer/DNA/Audience with zero channel history. | Niche-benchmark defaults + "needs more data" label; DNA versioned with data volume used. |
 | G-08 | Gap | **Time zones** for calendar/publish windows and daily-brief delivery. | Store creator timezone; all windows are local-time suggestions. |
@@ -489,6 +553,12 @@ and risks found during review, with resolutions.
 | G-18 | Gap | **Observability** (crash reporting, analytics SDK, logging) absent. | Add client crash reporting + backend metrics/alerting (§TECHNICAL_ARCHITECTURE §11). |
 | G-19 | Gap | **Data retention & deletion** (GDPR/CCPA) not specified. | Define retention policy + account deletion + data export (§9.3). |
 | G-20 | Gap | **Offline behavior** undefined. | Read-only cached views + graceful degradation; writes require connectivity. |
+| G-21 | Release gate | Custom scores and retained analytics need policy permission. | Obtain applicable YouTube derived-metric approval; enforce data-class retention (§9.2–9.3). |
+| G-22 | Dependency | Cache, queues and spend controls were scheduled after their consumers. | Move basic gateway/cache/workers/credits to Phase 1; keep advanced agents and paid subscriptions later. |
+| G-23 | Capacity | Hourly niche searches can exceed the separate search allowance. | Licensed-source decision plus per-bucket sampling budget before Trend Radar launch. |
+| G-24 | Feasibility | Early analytics windows and exact retention timestamps were over-specified. | Validate metric availability; timestamp supported snapshots; disclose freshness and bucket granularity. |
+| G-25 | Security | Browser-style gateway would expose secrets and arbitrary upstream routing. | Backend-only credentials, trusted URL/model registry, tenant authorization and egress controls (§7.15). |
+| G-26 | Reliability | Partial SSE, cancellation and missing usage could be treated as successful/free work. | Explicit terminal states, bounded retries, nullable usage and transactional budget reconciliation. |
 
 ---
 
@@ -507,20 +577,35 @@ and risks found during review, with resolutions.
 - Use **only** official YouTube Data API v3 / YouTube Analytics API / YouTube Reporting API.
 - Comply with the **YouTube API Services Terms of Service**: no scraping, no bypassing, proper
   Google/YouTube branding on any third-party screens, and correct attribution.
-- Respect quota (default 10,000 units/day; `search.list` and `videos.insert` have separate daily
-  buckets; quota resets midnight Pacific). Apply for a quota extension before GA.
+- Respect separate daily buckets: default 100 searches, 100 uploads and 10,000 units for other
+  endpoints combined. Verify the project's actual limits and budget discovery, pagination and sync.
+  Apply for necessary extensions before exceeding capacity, not after traffic is blocked.
 - Request only scopes needed per feature and per user action.
+- **Derived-metric approval:** YouTube's additional analytics policies apply only to audited
+  developers whose relevant use case/permission has been accepted. Complete that process before
+  enabling API-derived scores or extended statistical storage. Until then, restrict functionality
+  to uses/data retention permitted by the base policies; no workaround through AI-generated labels.
+  Official policy references are in §15.
 
 ### 9.3 Privacy & data protection (GDPR/CCPA alignment)
 - Clear consent for competitor tracking and channel-data processing.
-- Data export + account deletion (with channel data purge) within a defined window.
-- Retention policy: raw metrics cached for a bounded period; derived DNA/scores retained while the
-  account is active; deleted on account deletion.
+- Export/delete controls must cover channel data, prompts, reports, embeddings, object storage and
+  caches. Disconnect/deletion immediately stops new processing and revokes access. Define and test
+  purge deadlines (including backup handling) before launch; an active account is not a retention exemption.
+- **API data retention:** titles, descriptions, names and comment text remain subject to the
+  applicable 30-day refresh/deletion policy. For an accepted additional-analytics use case, eligible
+  statistics and derived metrics may be retained for at most 36 calendar months; choose shorter
+  product windows where possible. Without acceptance, apply the base developer policies.
+- Derived Channel DNA, prompts, embeddings and reports containing API data inherit its applicable
+  deletion/refresh obligations. Propagate source deletion and authorization revocation; do not retain
+  copied data indefinitely in an AI artifact or training dataset.
 - Minimal PII in admin dashboards and logs; API tokens never logged.
 
 ### 9.4 OAuth token security (hard requirement)
-- Refresh tokens encrypted at rest (backend vault); access tokens in memory/platform secure storage
-  only; never in plaintext DB or client storage. "Log out all devices" revokes server-side sessions.
+- YouTube refresh tokens are encrypted in the backend vault; YouTube access tokens stay in backend
+  memory. AI provider keys are backend-only. TubePilot app-session credentials use platform secure
+  storage as required by the selected auth flow. "Log out all devices" revokes server-side sessions.
+- Do not send YouTube OAuth tokens, AI keys, unneeded PII or unauthorized channel data to a model.
 
 ### 9.5 Advertising & disclosure
 - Sponsorship Assistant output must include sponsorship-disclosure guidance (FTC and local ad
@@ -546,7 +631,7 @@ and risks found during review, with resolutions.
 |---|---|
 | Performance | Dashboard first paint ≤ 2s on mid-range device; AI streaming responses show partial output; trend list loads from cache ≤ 500ms |
 | Scalability | Backend stateless services behind gateway; queue workers horizontally scalable; cache-first reads |
-| Reliability | AI gateway has primary/secondary failover; retries with backoff; graceful degradation to cached data |
+| Reliability | Capability-checked model switching; bounded pre-response retries; no replay of accepted/partial/ambiguous work; deadlines, cancellation and cached-read degradation. Automated consent-aware failover is later scope. |
 | Security | See §9; encrypted tokens; rate limiting; role-based access; secrets in a vault |
 | Observability | Client crash reporting; structured logs; per-provider AI cost/latency/error metrics; queue depth & failure alerts |
 | Accessibility | WCAG 2.1 AA-aligned mobile: ≥44dp touch targets, contrast, screen-reader labels, RTL support |
@@ -572,21 +657,25 @@ and risks found during review, with resolutions.
 
 ## 12. Development Roadmap
 
-**Phase 1 — MVP (features 1–20, minus premium bits)**
+**Phase 1 — MVP + safe infrastructure foundation**
 Auth (42) · YouTube connect (43) · Dashboard (2) · Channel analyzer (7) · Trend radar (3,4) ·
-Opportunity score (5) · Idea generator (12) · Script generator (14) · Title generator (16) ·
-Basic analytics (25-lite). *Exit: a creator can connect, see trends/opportunities, and produce an
-idea + script + title.*
+Approved opportunity score (5) · Idea generator (12) · Script generator (14) · Title generator (16) ·
+Basic analytics (25-lite) · Saved generation drafts (38-lite) · **OpenAI-compatible gateway (44),
+cache (48), basic workers (49), hard budget/credit enforcement (52)**.
+*Exit: a creator can connect (or use niche onboarding), analyze available evidence, generate and save
+an idea + script + title; API-source/derived-metric permissions and inference spend gates are met.*
 
-**Phase 2 — Growth Engine (21–40)**
+**Phase 2 — Growth Engine**
 Competitors (10) · Content gaps (11) · Shorts Studio (21,22) · Thumbnail Lab (18) · SEO (17) ·
-Content calendar (23,24) · Comment intelligence (28) · Alerts (31) · AI recommendations (41).
+Content calendar (23,24) · Comment intelligence (28) · Alerts (31) · AI recommendations (41) ·
+Full workspace/One-Tap Workflow (38,59) with deterministic orchestration (45 foundation).
 
-**Phase 3 — AI Agent (41–55)**
-AI orchestrator (45) · Growth Agent (29) · Daily brief (30) · Autonomous analysis · Background jobs
-(49) · Multi-AI provider (44) · Reports (53) · Subscription/credits (51,52).
+**Phase 3 — AI Agent**
+Advanced orchestrator (45) · Growth Agent (29) · Daily brief (30) · Autonomous analysis/scheduled jobs
+(49 extension) · Consent-aware multi-provider routing/failover (44 extension) · Reports (53) ·
+Paid subscriptions/credit upgrades (51,52 extension). Basic gateway/queues/spend caps are not deferred here.
 
-**Phase 4 — Advanced (56–62)**
+**Phase 4 — Advanced**
 Thumbnail generation (19) · Advanced A/B insights (20) · Multi-language (32) · Sponsorship
 assistant (34) · Agency mode (51-Agency) · Advanced missions (60) · Continuous learning (61).
 
@@ -597,13 +686,16 @@ assistant (34) · Agency mode (51-Agency) · Advanced missions (60) · Continuou
 | ID | Question | Owner | Blocking? |
 |---|---|---|---|
 | O-01 | Exact pricing per plan (Free/Creator/Pro/Agency) | Business | No (stub config) |
-| O-02 | Primary AI provider(s) + image model + embedding model | Eng/Biz | No (gateway abstracts) |
-| O-03 | Free-tier credit numbers & overage policy | Product | No (config) |
+| O-02 | Default text router: Hugging Face. Which verified model IDs, capabilities, prices and processing terms may be enabled? Image/embedding adapters later. | Eng/Biz | Before real text inference; later adapters by feature phase |
+| O-03 | Free-tier hard caps, price ceilings, reservation/refund and unknown-usage policy | Product/Eng | Before real inference (Phase 1) |
 | O-04 | Licensed trend-data source(s) and budget | Biz | Phase 1 dependency |
-| O-05 | YouTube API quota-extension application timing | Eng | Before GA |
+| O-05 | YouTube per-bucket traffic budget and quota-extension timing | Eng | Before traffic exceeds approved allocation |
 | O-06 | App store compliance review (Google Play) timing | Eng/Legal | Before release |
 | O-07 | Report export formats (PDF) — in-app vs email | Product | Phase 3 |
 | O-08 | "Agency" multi-channel UX specifics | Product | Phase 4 |
+| O-09 | YouTube analytics-use-case/derived-metric approval and retention schedule | Eng/Legal | Before affected scores/storage are enabled |
+| O-10 | Verified metric/API/scope/freshness matrix and licensed cold-start benchmarks | Eng/Product | Phase 1 evidence features |
+| O-11 | App auth choice, tenant ownership, moderation and AI task/ledger persistence | Eng | Before exposing the gateway to users |
 
 ---
 
@@ -635,7 +727,7 @@ assistant (34) · Agency mode (51-Agency) · Advanced missions (60) · Continuou
 | 22 | Shorts-to-Long Converter | C11 | 2 |
 | 23 | AI Content Calendar | C12 | 2 |
 | 24 | Publishing Planner | C12 | 2 |
-| 25 | Post-Publish Analyzer | C13 | 2 |
+| 25 | Post-Publish Analyzer | C13 | 1 basic / 2 advanced |
 | 26 | Video Health Score | C13 | 2 |
 | 27 | Retention Doctor | C13 | 2 |
 | 28 | Comment Intelligence | C13 | 2 |
@@ -648,21 +740,21 @@ assistant (34) · Agency mode (51-Agency) · Advanced missions (60) · Continuou
 | 35 | Policy & Risk Scanner | C16 | 2 |
 | 36 | AI Knowledge Base | C16 | 2 |
 | 37 | Brand Voice | C16 | 1 |
-| 38 | Content Workspace | C12 | 2 |
+| 38 | Content Workspace | C12 | 1 saved drafts / 2 full |
 | 39 | Search & Research Workspace | C16 | 2 |
 | 40 | Viral Score Engine | C5 | 1 |
 | 41 | Recommendation Engine | C14 | 2 |
 | 42 | Account & Security | C1 | 1 |
 | 43 | YouTube Integration | C2 | 1 |
-| 44 | AI Provider Architecture | C16 | 3 |
-| 45 | AI Agent Architecture | C14 | 3 |
+| 44 | AI Provider Architecture | C16 | 1 gateway / 3 advanced routing |
+| 45 | AI Agent Architecture | C14 | 2 workflow / 3 autonomous |
 | 46 | Backend Architecture | — | 1 |
 | 47 | Database Architecture | — | 1 |
-| 48 | Cache Layer | — | 2 |
-| 49 | Background Job System | — | 3 |
+| 48 | Cache Layer | — | 1 |
+| 49 | Background Job System | — | 1 basic / 3 autonomous |
 | 50 | Admin Dashboard | C16 | 3 |
 | 51 | Subscription System | C16 | 3 |
-| 52 | Usage & Credit System | C16 | 3 |
+| 52 | Usage & Credit System | C16 | 1 enforcement / 3 paid upgrades |
 | 53 | Reports | C16 | 3 |
 | 54 | Native Android UX | — | 1 |
 | 55 | Design System | — | 1 |
@@ -673,3 +765,19 @@ assistant (34) · Agency mode (51-Agency) · Advanced missions (60) · Continuou
 | 60 | Viral Mission | C14 | 4 |
 | 61 | Continuous Learning Loop | C14 | 4 |
 | 62 | Roadmap | — | — |
+
+
+---
+
+## 15. Official API/policy references
+
+Recheck these sources and the actual project/model configuration at implementation and release;
+external permission and API availability are not established by this PRD.
+
+- [YouTube quota allocation and compliance audits](https://developers.google.com/youtube/v3/guides/quota_and_compliance_audits)
+- [YouTube derived metrics and data storage](https://developers.google.com/youtube/terms/derived-metrics-policy)
+- [YouTube developer-policy compliance guide](https://developers.google.com/youtube/terms/developer-policies-guide)
+- [YouTube Analytics report queries and availability](https://developers.google.com/youtube/analytics/reference/reports/query)
+- [YouTube Analytics metric definitions and retention segments](https://developers.google.com/youtube/analytics/metrics)
+- [Current three-minute Shorts eligibility](https://support.google.com/youtube/answer/15424877?hl=en)
+- [Hugging Face OpenAI-compatible chat completion](https://huggingface.co/docs/inference-providers/tasks/chat-completion)

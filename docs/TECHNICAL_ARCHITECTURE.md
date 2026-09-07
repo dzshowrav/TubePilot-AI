@@ -1,9 +1,14 @@
 # TubePilot AI — Technical Architecture
 
-**Version:** 1.0 · **Status:** Draft for review · **Date:** 2026-09-08
+**Version:** 1.1 · **Status:** Target architecture; AI gateway transport foundation implemented · **Date:** 2026-09-08
 **Stack decision:** React Native (TypeScript) client + full-stack backend (API gateway + services +
 PostgreSQL + Redis + queue + AI gateway).
-**Companion doc:** [`PRD.md`](./PRD.md) (requirements; this document is the how).
+**Companion docs:** [`PRD.md`](./PRD.md) (requirements) · [`AI_GATEWAY.md`](./AI_GATEWAY.md)
+(detailed gateway contract, migration from the supplied design and implementation status).
+
+**Repository reality:** `packages/ai-gateway` is implemented and unit-tested against mocked providers.
+The Expo app, NestJS API, workers, database, billing and deployment below are still planned. No live
+provider model, YouTube permission or production integration has been validated by the unit tests.
 
 ---
 
@@ -39,8 +44,8 @@ PostgreSQL + Redis + queue + AI gateway).
                 ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                            AI Gateway                                   │
-│  Primary AI · Secondary AI · Image AI · Embedding/Search AI             │
-│  (provider-agnostic interface; failover, cost metering, safety filter)  │
+│  OpenAI-compatible chat/SSE · default Hugging Face Inference Router    │
+│  Server secrets · model registry · usage · cancellation · safe errors │
 └─────────────────────────────────────────────────────────────────────────┘
                 │
 ┌───────────────┼─────────────────────────────────────────────────────────┐
@@ -56,7 +61,12 @@ PostgreSQL + Redis + queue + AI gateway).
 - **Stateless application services** behind the gateway; horizontal scaling.
 - **Cache-first reads** for trend/analytics data (Redis) to protect YouTube quota and AI cost.
 - **All heavy work is async** (queue), never blocking a request.
-- **AI provider abstraction** so switching providers never changes app UI or business logic.
+- **AI provider abstraction:** OpenAI-compatible chat first; verified model/provider aliases selected
+  server-side. Image generation/embeddings and non-compatible APIs need separate adapters.
+- **Phase 1 safety foundation:** cache, basic workers, provider gateway and hard spending controls
+  precede user-facing generation. Advanced agents/automatic failover are not MVP prerequisites.
+- **Modular monolith + worker first:** NestJS module boundaries do not require separate networked
+  microservices. Extract services only when scaling/ownership evidence justifies the complexity.
 
 ---
 
@@ -70,7 +80,7 @@ PostgreSQL + Redis + queue + AI gateway).
 | Client state | Zustand | Lightweight, minimal boilerplate |
 | UI / theming | Custom design tokens + `react-native-paper` (or Unistyles) | Material-3 dark-first, dynamic cards |
 | Charts | `react-native-gifted-charts` / Victory Native | Native-feel charts |
-| Secure storage | `expo-secure-store` (Keystore/Keychain) | OAuth access-token cache |
+| Secure storage | `expo-secure-store` (Keystore/Keychain) | TubePilot app-session credentials only; provider and YouTube tokens stay backend-side |
 | Backend | **Node.js + NestJS (TypeScript)** | Shares TS with client; modular, gateway-friendly |
 | API layer | REST (JSON) + SSE for AI streaming | Simple, cacheable; SSE for token streaming |
 | Database | PostgreSQL 16 | Relational core; JSONB for flexible payloads |
@@ -78,7 +88,7 @@ PostgreSQL + Redis + queue + AI gateway).
 | Cache | Redis 7 | Trend/metric caches, session store |
 | Queue | BullMQ (Redis-backed) | Trend scan, analysis, notifications |
 | Object storage | S3-compatible | Thumbnail uploads, exports |
-| AI providers | OpenAI / Anthropic / Google Gemini (text) · image model (DALL·E/Flux) · embeddings (OpenAI/Cohere) | Behind the gateway |
+| AI providers | **Hugging Face Inference Router by default; verified OpenAI-compatible endpoints/models** | `@tubepilot/ai-gateway` chat/SSE adapter; non-compatible text, image-generation and embedding adapters later |
 | Auth | Firebase Auth **or** custom JWT + OAuth2 | Email + Google sign-in |
 | Observability | Sentry (client) + OpenTelemetry/Prometheus/Grafana (server) | Crash + metrics + logs |
 | Infra | Docker Compose (dev) → managed cloud (EKS/Cloud Run/RDS) | Path from local to prod |
@@ -107,12 +117,16 @@ src/
 
 **Conventions**
 - **Design system:** token-driven (colors, spacing, type, radius) → dark-first with light + system
-  modes (PRD §56). ≥44dp touch targets, skeleton loaders, bottom sheets, micro-animations.
+  modes (source feature 56; PRD Appendix A). ≥44dp touch targets, skeleton loaders, bottom sheets, micro-animations.
 - **AI streaming:** SSE over the gateway; render partial output; cancel + retry.
-- **Offline:** TanStack Query cache serves read-only data; a global "offline" banner; writes queue
-  for retry or are blocked with clear messaging.
-- **Security:** access token in `expo-secure-store` only; refresh token **never** on device — the
-  backend vault holds it (PRD §9.4). Sensitive screens behind biometric lock (optional).
+- **Offline:** TanStack Query cache serves read-only data; a global offline banner. In MVP, writes
+  require connectivity; do not queue billable AI generations invisibly or replay a cancelled request.
+- **Security:** TubePilot app-session credentials use `expo-secure-store` as required by the chosen
+  auth solution. YouTube refresh/access tokens and AI provider keys never go to the device.
+  Distinguish an app refresh credential from a YouTube OAuth refresh token.
+- **AI preferences:** store only enabled catalog aliases and safe UI settings. Backend controls
+  provider URLs, secrets, capability validation, feature prompts, context access and spending limits.
+  Model changes affect new tasks; no global cancellation controller shared between screens.
 - **i18n:** Bengali shaping + Arabic RTL verified in QA (PRD G-09).
 
 ---
@@ -149,50 +163,96 @@ orchestrator composes them (never calls other modules' DBs directly).
 
 ---
 
-## 5. AI Provider Gateway & Agents
+## 5. AI Gateway & Agents
 
-### 5.1 Gateway interface (provider-agnostic)
+### 5.1 Adopted transport (implemented foundation)
+
+The supplied gateway is adopted as a **server-only OpenAI-compatible Chat Completions adapter**,
+not copied as a browser credential proxy. Default upstream:
+`https://router.huggingface.co/v1/chat/completions`.
+
 ```ts
-interface AiGateway {
-  chat(req: ChatRequest): Promise<ChatResult>;          // primary → failover secondary
-  stream(req: ChatRequest): AsyncIterable<string>;      // SSE token stream
-  image(req: ImageRequest): Promise<ImageResult>;       // thumbnail generation
-  embed(texts: string[]): Promise<number[][]>;          // search/semantic features
-}
+import { AiGateway, ModelRegistry } from '@tubepilot/ai-gateway';
+// AiGateway exposes:
+// chat(request: ChatRequest, options?: GenerationOptions): Promise<ChatResult>
+// stream(request: ChatRequest, options?: GenerationOptions): AsyncGenerator<GatewayEvent>
+// GatewayEvent = start | delta | usage | complete; failures throw a safe GatewayError.
 ```
-- **Routing:** `PrimaryAI` (default), `SecondaryAI` (failover/cheap model), `ImageAI`, `EmbeddingAI`
-  — each an adapter implementing the same interface, so provider swaps never touch UI/logic (PRD §44).
-- **Failover:** on primary error/timeout → retry → secondary; log and meter per provider.
-- **Cost metering:** every call records tokens/cost/latency/provider — feeds the admin AI dashboard
-  and the credit system.
-- **Safety filter:** input/output moderation before persisting or returning generated content.
 
-### 5.2 Agents (modular, not one mega-prompt)
+- `ProviderConfig`: trusted provider ID/base URL, exact HTTPS-origin allowlist and a backend
+  `getApiKey()` secret resolver. No API keys in localStorage/AsyncStorage, application DTOs or logs.
+  Redirects are disabled; production DNS/egress controls are additionally required.
+- `ModelRegistry`: immutable validated model records, custom-model registration, enabled catalog,
+  modality/parameter/streaming support, context/output limits and provider-specific token-limit field.
+  The supplied DeepSeek/Qwen/Llama/MiniMax IDs are disabled reference entries until verified.
+- `buildGatewayPayload`: immutable TubePilot policy instructions, trusted feature guidance,
+  authorized Channel DNA/Brand Voice/source context as data, full-turn history trimming, bounded
+  PNG/JPEG/WebP inputs, supported sampling defaults and output-token reservation.
+- Reasoning controls use supported `reasoning_effort`, not a forced private chain-of-thought prompt.
+  Separate reasoning fields are ignored; standard inline thinking tags are filtered across chunks.
+- `chat()` explicitly requests JSON; `stream()` explicitly requests SSE. Stream framing handles
+  split UTF-8/CRLF/multiline/final events and usage-only frames; invalid/unfinished streams fail.
+  Missing input/output/total usage stays null, not zero. Completion records model/provider aliases,
+  context packing, finish reason and attempt count.
+- Per-call AbortController/deadline; bounded retries only for explicit HTTP 429/503 rejection before
+  an accepted response. Honor Retry-After seconds/dates. No replay after accepted/partial/ambiguous
+  work, no silent streaming-to-JSON repeat, and no automatic cross-provider failover in this package.
+
+See [`AI_GATEWAY.md`](./AI_GATEWAY.md) for exact limits, errors, configuration and tested behavior.
+
+### 5.2 Host integration and trust gates (planned)
+
+```text
+authenticated feature request
+  → authorize tenant/project/assets/model → validate payload → reserve worst-case credits
+  → persist task/outbox → BullMQ worker → secret resolver → AI gateway
+  → moderate/schema-check output → persist task/events → settle or reconcile usage
 ```
+
+The library is not a NestJS endpoint, tenant authorizer, image decoder, moderation system, durable
+queue or billing ledger. The API/worker must implement those gates before real user traffic.
+Clients cannot submit upstream URLs, keys, trusted instructions or arbitrary context pointers.
+
+- Model selection is filtered by plan, feature, capabilities and approved processing terms, including
+  downstream providers behind a router. Configuration/model-price versions are frozen per task.
+- Image generation and embeddings are **not** implemented by `/chat/completions`; reserve separate
+  adapters/interfaces for those capabilities. Structured-output/tool execution also requires explicit
+  provider support and host validation before activation.
+- Input/output moderation precedes persistence/display. Until streaming moderation is available,
+  buffer the final answer rather than forwarding raw transport deltas.
+- Any future automatic failover is consent/capability/budget-aware and attributed to the actual model;
+  it cannot splice outputs, re-run partial generations or bypass task idempotency.
+
+### 5.3 Agents (planned feature layer, not one mega-prompt)
+
+```text
 TrendAgent · ResearchAgent · IdeaAgent · ScriptAgent · TitleAgent · ThumbnailAgent ·
 SEOAgent · AnalyticsAgent · CompetitorAgent · GrowthAgent
                               ▲
-                    Orchestrator Agent
+                    Workflow Orchestrator
 ```
-- Each agent = bounded prompt template + tool context (Channel DNA, Brand Voice, Knowledge Base,
-  recent metrics) + structured output schema.
-- The **Orchestrator** sequences agents for One-Tap Workflow, Growth Agent plans, and Viral Missions,
-  and merges results into a single package (PRD C12/C14).
-- Agents never fabricate metrics: they consume passed-in data; ResearchAgent returns citations.
+
+Each agent uses a bounded feature prompt, authorized context, explicit tool permissions and a
+validated output schema. Deterministic One-Tap orchestration arrives in Phase 2; autonomous planning
+in Phase 3. Untrusted research/comments cannot authorize tools or publishing. Metrics come from
+validated sources, not generated text; research citations are checked and linked to source timestamps.
+API-derived scores/storage remain gated on the applicable YouTube approval (PRD §9.2–9.3).
 
 ---
 
 ## 6. Data Model (PostgreSQL)
 
-Core entities (from spec §47), with key fields:
+Proposed entities (not migrations yet). Explicitly separate source observations, model configuration,
+user task state and the financial ledger:
 
 | Entity | Key fields |
 |---|---|
 | `users` | id, email, auth_provider, role, timezone, locale, plan |
 | `channels` | id, user_id, youtube_channel_id, title, avatar, country, refresh_token_enc, scopes[], status |
-| `channel_metrics` | channel_id, date, subs, views, watch_time, ctr, retention, engagement |
+| `channel_metrics` | channel_id, period_start/end, observed_at, available_through, source, nullable metrics_json, expires_at |
+| `channel_dna` | channel_id, version, video_count, source_snapshot_ids, traits_json, confidence, computed_at, expires_at |
 | `videos` | id, channel_id, youtube_video_id, title, kind(short/long), published_at, duration |
-| `video_metrics` | video_id, date, views, ctr, retention_json, likes, comments, shares |
+| `video_metrics` | video_id, observed_at, window, period_start/end, source, nullable metrics_json, expires_at |
 | `competitors` | user_id, channel_id, youtube_channel_id, added_at |
 | `trends` | id, topic, category, source, first_seen_at, state(emerging…declining) |
 | `trend_snapshots` | trend_id, ts, score, demand, velocity, competition, freshness, opportunity |
@@ -203,22 +263,42 @@ Core entities (from spec §47), with key fields:
 | `projects` | id, user_id, channel_id, name, stage, workflow_state |
 | `content_calendar` | user_id, date, video_id, topic, format, priority, window |
 | `alerts` | user_id, type, severity, payload_json, read_at |
-| `ai_tasks` | id, user_id, agent, status, credits_used, result_json, error |
+| `ai_providers` | id, approved_base_url, secret_ref (not plaintext key), processing_policy, config_version, enabled |
+| `ai_models` | id, provider_id, upstream_model, capabilities_json, context/output limits, price_version, config_version, enabled |
+| `ai_tasks` | id, user_id, project_id, agent, model/config/price snapshot, idempotency_key, request_hash, status, result_json, safe_error, created/finished_at |
+| `ai_attempts` | task_id, attempt_no, provider/model, status, nullable input/output/total tokens, latency, reconciliation_status |
+| `ai_task_events` | task_id, sequence, type, moderated_payload, created_at, expires_at |
+| `credit_ledger` | id, user_id, task_id, reservation_id, kind(reserve/settle/release/adjust), amount, price_version, created_at |
+| `outbox_events` | id, task_id, kind, published_at, created_at |
 | `subscriptions` | user_id, plan, status, current_period_end |
-| `usage` | user_id, date, credits_used, requests, tokens |
+| `usage` | user_id, date, derived totals from settled ledger/attempts; not the source of truth |
 | `sessions` | user_id, device_id, refresh_token_hash, created/revoked_at |
 | `knowledge_docs` | user_id, kind, content, embedding_id, deleted_at |
 | `reports` | user_id, type, period, payload_json, generated_at |
 
-**Encryption:** `channels.refresh_token_enc` is encrypted at rest (KMS/envelope encryption).
-**Retention:** raw metrics purged after a bounded window; derived DNA/scores retained while account
-is active and deleted on account deletion (PRD §9.3).
+**Constraints:** unique `(user_id, idempotency_key)` on tasks, `(task_id, sequence)` on events,
+`(task_id, attempt_no)` on attempts, and unique settlement/release operations per reservation.
+Authorize child resources through their project/channel/task owner. MVP uses user-owned workspaces;
+Agency requires explicit workspace memberships and per-channel permissions before activation.
+
+**Encryption:** `channels.refresh_token_enc` uses KMS/envelope encryption; `secret_ref` points to a
+vault entry. App session refresh-token hashes are distinct from YouTube tokens.
+
+**Retention:** enforce PRD §9.3 by source/data class. Applicable metadata needs 30-day refresh/deletion;
+accepted additional-analytics use cases can retain qualifying statistics/derived data for at most
+36 months. No indefinite “active account” exemption. Source deletion/revocation propagates to DNA,
+embeddings, prompts, reports, cached views and event replay; define backup handling before release.
+
+**Analytics feasibility:** maintain a metric/API/scope/granularity/availability matrix. Use timestamped
+snapshots only for supported early-window counters; delayed/unavailable CTR, audience and retention
+metrics stay null with freshness metadata, never inferred as if they were official measurements.
 
 ---
 
 ## 7. API Design (REST)
 
-Auth via bearer JWT. Naming: `/v1/<resource>`. Representative surface:
+Planned host API (not implemented routes). Auth via TubePilot bearer session. Naming: `/v1/<resource>`.
+Representative surface:
 
 ```
 POST   /v1/auth/signin            POST /v1/auth/signout
@@ -247,11 +327,19 @@ POST   /v1/growth/agent           POST /v1/growth/missions
 GET    /v1/brief                 GET  /v1/alerts
 POST   /v1/policy/scan            POST /v1/knowledge
 GET    /v1/reports/:type
-POST   /v1/ai/assistant           (streaming SSE)
+POST   /v1/ai/assistant           (submits a typed assistant task)
+GET    /v1/ai/models              POST /v1/ai/tasks
+GET    /v1/ai/tasks/:id            GET  /v1/ai/tasks/:id/events
+POST   /v1/ai/tasks/:id/cancel
 GET    /v1/billing/usage
 ```
 
-- **AI-heavy endpoints return 202 + task id** and stream via SSE or poll `GET /v1/ai/tasks/:id`.
+- **AI-heavy endpoints return 202 + task ID**, with an idempotency key and a transactional credit
+  reservation. Stream persisted normalized events or poll the existing task; reconnection never
+  starts another generation. Do not place session credentials in an SSE query string.
+- Task reads/events/cancellation require owner checks, as do all channel/project/attachment lookups.
+  Use explicit worker cancellation; disconnecting one subscriber does not cancel a persisted task.
+  Headers/replay/error semantics are defined in AI_GATEWAY §7.
 - **All YouTube reads** go through the backend (never client-to-YouTube), so quota/caching/token
   handling are centralized.
 
@@ -271,7 +359,13 @@ events. Trend scans write snapshots to Postgres and refresh cache.
 
 **Trend data sources (no scraping):** YouTube Data API `search.list` (own daily bucket), Google
 Trends (via licensed/official access), public RSS/news feeds, and licensed third-party trend APIs.
-Every trend row stores its `source` for traceability (PRD G-04, G-13).
+Every trend row stores its `source` and retrieval time for traceability (PRD G-04, G-13).
+
+**Capacity gate:** the default separate search allowance is 100 calls/day, not 10,000 searches.
+One hourly search for each of five niches already needs 120 calls/day, before pagination. Pick a
+licensed source and a per-bucket sampling budget before enabling categories; share discovery scans
+where permitted. Monitor actual project quotas and stop/throttle at a configured reserve rather than
+retrying daily exhaustion. Cache private channel/DNA/AI data by tenant/model/configuration version.
 
 ---
 
@@ -279,15 +373,19 @@ Every trend row stores its `source` for traceability (PRD G-04, G-13).
 
 | Queue | Jobs | Schedule |
 |---|---|---|
-| `trend-scan` | scan → research → AI analysis → score → notification | periodic (e.g. hourly per active category) |
-| `channel-analysis` | sync metrics → recompute DNA/health | daily per connected channel |
+| `trend-scan` | scan → research → AI analysis → approved score → notification | scheduled against source licenses and per-bucket daily budgets, not unconditional hourly fan-out |
+| `channel-analysis` | sync available metrics → recompute versioned DNA/health | daily baseline plus explicit supported 1h/6h/24h/48h/7d observation jobs; disclose lag |
 | `ai-tasks` | any AI generation (ideas, scripts, titles, …) | on demand |
 | `competitor-watch` | poll new uploads → spike detection → alert | every 15–30 min |
 | `notifications` | push + in-app digest | on demand |
 | `reports` | weekly/monthly report build | cron |
 
-- Retries with exponential backoff, dead-letter queue, idempotency keys.
-- Worker concurrency scales independently of the API.
+- Basic queues ship in Phase 1; autonomous schedules expand in Phase 3.
+- Idempotency keys, transactional outbox and dead-letter handling prevent duplicate task admission.
+  Do not wrap ambiguous/accepted/partial AI calls in generic BullMQ retries: the transport owns its
+  narrow pre-response 429/503 retry policy. Other idempotent jobs may use exponential backoff.
+- Worker concurrency scales independently, bounded per user/provider and by reserved budget.
+  Persist safe terminal states and propagate cancellation/revocation across workers.
 
 ---
 
@@ -296,11 +394,20 @@ Every trend row stores its `source` for traceability (PRD G-04, G-13).
 - **Sign-in:** Firebase Auth (or custom JWT) for email + Google; short-lived access JWT +
   rotating refresh tokens; server-side session + device registry (supports "log out all devices").
 - **YouTube OAuth:** backend-owned OAuth flow (PKCE), least-privilege incremental scopes; refresh
-  token encrypted in vault; access token kept server-side or in `expo-secure-store`.
-- **Transport:** TLS everywhere; secrets in a vault (never in env files/repos).
+  token encrypted in vault; YouTube access token stays server-side. App-session credentials alone
+  use `expo-secure-store` on device.
+- **AI secrets/transport:** backend secret manager, trusted HTTPS upstream allowlist, no redirects;
+  deployment egress/DNS restrictions. Never expose AI keys through mobile storage, bundles or URLs.
+  Production uses vault-managed secrets; untracked local environment variables are for development only.
 - **Rate limiting** at the gateway per user/IP; per-endpoint limits for AI endpoints.
-- **RBAC:** user / member / admin; admin endpoints role-gated and audit-logged.
-- **Data hygiene:** PII minimized in logs; tokens never logged; admin shows masked emails.
+- **RBAC + ownership:** user/member/admin roles do not replace resource authorization. Validate
+  ownership of every channel, project, task, event subscription and asset. Provider/model changes
+  require audited admin access; persisted context is reauthorized at worker dispatch.
+- **Data hygiene:** PII minimized in logs; no tokens/raw prompts/raw provider errors/private reasoning;
+  admin shows masked emails. Approved processing consent and source deletion apply to AI artifacts.
+- **Untrusted inputs:** validate before parsing/dispatch, authorize and decode uploaded assets, isolate
+  reference material from trusted instructions, moderate output before display, and grant agents only
+  explicit feature tools. System prompts are not a security boundary.
 
 ---
 
@@ -310,7 +417,8 @@ Every trend row stores its `source` for traceability (PRD G-04, G-13).
   (activation, One-Tap Workflow completion).
 - **Server:** structured logs (request id), OpenTelemetry traces, Prometheus metrics
   (latency, error rate, queue depth, cache hit-rate).
-- **AI dashboard (admin):** per-provider token usage, cost, latency, error rate, failover counts.
+- **AI dashboard (admin):** per-provider/model attempts, input/output/total usage or unknown state,
+  latency, safe error codes, retries, cancellations, partial results and cost reconciliation status.
 - **Alerts:** queue depth, provider error spike, YouTube quota remaining, cost budget breach.
 
 ---
@@ -326,17 +434,32 @@ on admin actions; PII masked.
 ## 13. Subscription & Credits
 
 - Plans: Free / Creator / Pro / Agency (PRD §7.14) — feature flags + limits stored per plan.
-- **Credit meter:** `usage` rows incremented per AI task; credits deducted before execution; the
-  gateway reports tokens → cost → credits. Free tier has daily + monthly caps.
-- **Enforcement:** billing module authorizes each AI call (or returns 402 / "upgrade" prompt).
-- **Webhooks:** Stripe (or equivalent) for plan changes; grace period on payment failure.
+- **Phase 1 hard caps:** before inference, atomically authorize/reserve worst-case input/output and
+  permitted-attempt spend. Freeze model configuration/pricing and enforce daily/monthly limits under
+  concurrency; free users cannot create unbounded queued reservations.
+- **Append-only ledger:** reserve → settle known usage → release remainder, each operation unique
+  and transactional. `usage` rows are aggregates, not an auditable balance source.
+- **Unknown/partial usage:** missing counters, cancellation and ambiguous upstream failures are not
+  zero-cost events. Keep conservative pending reservations until reconciled under the disclosed
+  policy; do not automatically refund/re-run work that may already be billable.
+- **Task idempotency:** unique user/key plus request hash; same request returns existing task, changed
+  request with same key returns 409. Queue retries cannot repeat accepted/partial provider calls.
+- **Paid subscriptions (Phase 3):** verified, replay-safe payment webhooks with unique event IDs;
+  plan changes/grace periods are distinct from the Phase 1 usage/budget safety layer.
+- These are host integration requirements; the gateway package reports usage but does not implement
+  the database ledger or payment provider. See AI_GATEWAY §8 for transaction/reconciliation flow.
 
 ---
 
-## 14. Monorepo Layout (proposed)
+## 14. Monorepo Layout (implemented foundation + planned applications)
+
+Only the gateway package, root npm/TypeScript setup, tests, CI and documentation currently exist.
+The application/infra directories below are the target layout, not runnable services yet.
 
 ```
 TubePilot-AI/
+  package.json         # implemented npm workspaces; build/typecheck/test/check
+  .github/workflows/ci.yml # implemented offline gateway checks
   apps/
     mobile/            # React Native (Expo) client
     api/               # NestJS gateway + services
@@ -344,7 +467,7 @@ TubePilot-AI/
     admin/             # admin web (optional)
   packages/
     contracts/         # shared TS types (API DTOs), zod schemas
-    ai-gateway/        # provider adapters + orchestrator (shared lib)
+    ai-gateway/        # IMPLEMENTED server-only chat/SSE transport + registry + tests
     ui/                # design tokens / shared components
   infra/
     docker-compose.yml # postgres, redis, minio (dev)
@@ -352,22 +475,40 @@ TubePilot-AI/
   docs/
     PRD.md
     TECHNICAL_ARCHITECTURE.md
+    AI_GATEWAY.md      # adopted gateway design, implemented contracts and release gates
 ```
 
 ---
 
 ## 15. Environments & Deployment
 
-- **Local:** Docker Compose (Postgres + Redis + MinIO) + `apps/mobile` Expo dev build.
+- **Current local verification:** Node 22+, `npm ci`, `npm run check`. Tests use injected mocked
+  providers and no credentials, external inference, database or app server.
+- **Planned local stack:** Docker Compose (Postgres + Redis + MinIO) + Expo dev build. Any browser
+  preview server binds `0.0.0.0`, accepts the preview host, and proxies relative API URLs; browser
+  code must not call a sandbox service through localhost.
 - **Staging/Prod:** API + workers on managed containers; managed Postgres/Redis; object storage for
   thumbnails/exports; CI builds signed app binaries + EAS updates.
-- **Pre-GA checklist:** YouTube API quota-extension application, OAuth consent-screen verification,
-  Play Store review, privacy policy + data deletion flow.
+- **Before live inference:** authenticated API/worker, tenant-isolation tests, vault/egress controls,
+  verified model/capability/pricing configuration, moderation/asset validation, hard budgets, durable
+  tasks/ledger, cancellation/reconciliation and staging conformance tests.
+- **Before affected YouTube features:** API metric/source validation, per-bucket quota plan, required
+  derived-metric/storage permission and tested refresh/deletion workflows. OAuth verification,
+  app-store review and privacy policy are additional release gates—not substitutes for permission.
 
 ---
 
 ## 16. References
 
-- YouTube Data API quota model & upload buckets (post-2026 changes): [1](https://www.blotato.com/blog/youtube-api-pricing) · [3](https://postproxy.dev/blog/youtube-upload-api-guide/) · [5](https://bundle.social/blog/youtube-shorts-api-secrets)
-- YouTube upload & Shorts via `videos.insert` (resumable): [2](https://posteverywhere.ai/blog/post-to-youtube-api) · [4](https://www.veed.io/learn/youtube-shorts-api)
-- YouTube official "Test & Compare" (native thumbnail/title A/B): [1](https://monitoryt.com/blog/thumbnail-ab-testing) · [2](https://influencermarketinghub.com/youtube-test-compare/) · [3](https://growthos.in/blog/youtube-thumbnail-a-b-testing-best-practices)
+Prefer official documentation over third-party “latest quota/model” claims. Revalidate model/API
+support and actual project limits at activation and release.
+
+- [Hugging Face OpenAI-compatible chat-completion API](https://huggingface.co/docs/inference-providers/tasks/chat-completion)
+- [YouTube default quota allocation and audits](https://developers.google.com/youtube/v3/guides/quota_and_compliance_audits)
+- [YouTube derived metrics and data storage](https://developers.google.com/youtube/terms/derived-metrics-policy)
+- [YouTube developer-policy compliance guide](https://developers.google.com/youtube/terms/developer-policies-guide)
+- [YouTube Analytics query availability and scopes](https://developers.google.com/youtube/analytics/reference/reports/query)
+- [YouTube Analytics metrics and retention segments](https://developers.google.com/youtube/analytics/metrics)
+- [YouTube current three-minute Shorts guidance](https://support.google.com/youtube/answer/15424877?hl=en)
+- [YouTube resumable uploads](https://developers.google.com/youtube/v3/guides/using_resumable_upload_protocol)
+- [YouTube thumbnail Test & Compare guidance](https://support.google.com/youtube/answer/13861714?hl=en)
