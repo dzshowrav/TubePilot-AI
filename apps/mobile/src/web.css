@@ -1,0 +1,73 @@
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  background: #111217;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  font-family: Inter, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+button,
+input,
+textarea {
+  font: inherit;
+}
+textarea {
+  resize: vertical;
+}
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-thumb {
+  background: #444653;
+  border-radius: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+:focus-visible {
+  outline: 2px solid #b7a2fa !important;
+  outline-offset: 4px;
+}
+::selection {
+  background: #b7a2fa55;
+}
+input::placeholder,
+textarea::placeholder {
+  color: #737688;
+}
+a {
+  color: inherit;
+}
+button,
+[role="button"] {
+  touch-action: manipulation;
+}
+#root {
+  display: flex;
+  flex-direction: column;
+}
+svg {
+  flex-shrink: 0;
+}
+@media (prefers-reduced-motion: no-preference) {
+  [data-testid="page-content"] {
+    animation: appear 0.28s ease-out;
+  }
+  @keyframes appear {
+    from {
+      opacity: 0;
+      transform: translateY(5px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+}

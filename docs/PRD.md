@@ -1,6 +1,6 @@
 # TubePilot AI — Product Requirements Document (PRD)
 
-**Version:** 1.1 · **Status:** Product draft; gateway transport foundation implemented · **Date:** 2026-09-08
+**Version:** 1.3 · **Status:** Product requirements; milestone 0.3 read-only connector implemented · **Date:** 2026-09-08
 **Author:** TubePilot AI product team
 **Source:** 62-point feature architecture ("Complete Professional Feature Architecture")
 **Language:** English (বাংলা retained where the original spec is in Bengali)
@@ -8,8 +8,12 @@
 > **How to read this document.** This PRD refines the original 62-point spec and records both
 > adopted requirements and unresolved release gates. It is not proof that APIs, policies or product
 > acceptance criteria have been validated in production. Source features map through Appendix A.
-> The implemented gateway foundation and remaining integration work are detailed in
-> [`AI_GATEWAY.md`](./AI_GATEWAY.md); all application-level acceptance criteria remain pending.
+> The gateway design is in [`AI_GATEWAY.md`](./AI_GATEWAY.md). A runnable development workspace
+> now implements the core draft/project/calendar flow; see [`IMPLEMENTATION_STATUS.md`](./IMPLEMENTATION_STATUS.md)
+> for tested behavior, demo boundaries and remaining work. Passing development tests does not
+> automatically satisfy the full production acceptance criteria below.
+> The read-only Google/YouTube connector is implemented but not live-verified; see
+> [`YOUTUBE_INTEGRATION.md`](./YOUTUBE_INTEGRATION.md). Channel authorization is not Google app sign-in.
 
 ---
 
@@ -520,8 +524,10 @@ policy. Paid-plan upgrades may follow in Phase 3. *(Open question O-03; AI_GATEW
 - [ ] API task reads/events/cancel and uploaded context/assets pass cross-tenant authorization tests.
 - [ ] Streamed text passes the host moderation gate before display; full results pass schema checks.
 
-**Implementation note:** the transport and mocked unit tests exist in `packages/ai-gateway`.
-End-to-end acceptance above requires the planned API, worker, billing, moderation and mobile layers.
+**Implementation note:** the transport exists in `packages/ai-gateway`; `apps/api` now adds a
+development task host with SQLite persistence, credit reservations, cancellation and event replay.
+`apps/mobile` adds the universal client and browser-tested creator workflow. Production moderation,
+verified accounts, distributed workers, exact cost reconciliation and external integrations remain gates.
 See [`AI_GATEWAY.md`](./AI_GATEWAY.md) for exact contracts and remaining release gates.
 
 ---

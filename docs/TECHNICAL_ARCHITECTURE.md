@@ -1,14 +1,21 @@
 # TubePilot AI — Technical Architecture
 
-**Version:** 1.1 · **Status:** Target architecture; AI gateway transport foundation implemented · **Date:** 2026-09-08
+**Version:** 1.3 · **Status:** Production target + milestone 0.3 development implementation · **Date:** 2026-09-08
 **Stack decision:** React Native (TypeScript) client + full-stack backend (API gateway + services +
 PostgreSQL + Redis + queue + AI gateway).
 **Companion docs:** [`PRD.md`](./PRD.md) (requirements) · [`AI_GATEWAY.md`](./AI_GATEWAY.md)
 (detailed gateway contract, migration from the supplied design and implementation status).
 
-**Repository reality:** `packages/ai-gateway` is implemented and unit-tested against mocked providers.
-The Expo app, NestJS API, workers, database, billing and deployment below are still planned. No live
-provider model, YouTube permission or production integration has been validated by the unit tests.
+**Repository reality:** `apps/mobile` now contains Expo/React Native screens and a Vite-powered
+React Native Web preview. `apps/api` contains NestJS endpoints, SQLite persistence, single-process
+async tasks, credit reservations and event replay. Shared contracts, gateway/API tests and browser
+workflow tests are implemented. A read-only YouTube OAuth/PKCE, token-vault, sync and revocation
+connector now exists in `apps/api/src/youtube`; actual-data views live in `apps/mobile`. See
+[`YOUTUBE_INTEGRATION.md`](./YOUTUBE_INTEGRATION.md). **Live Google conformance, Google app sign-in,
+PostgreSQL/Redis/BullMQ, production billing/moderation and advanced agents remain release work.** See
+[`IMPLEMENTATION_STATUS.md`](./IMPLEMENTATION_STATUS.md) for exact boundaries and current setup.
+No live provider, YouTube permission, signed native binary or production deployment is validated
+by a demo or mocked test.
 
 ---
 
@@ -200,7 +207,7 @@ import { AiGateway, ModelRegistry } from '@tubepilot/ai-gateway';
 
 See [`AI_GATEWAY.md`](./AI_GATEWAY.md) for exact limits, errors, configuration and tested behavior.
 
-### 5.2 Host integration and trust gates (planned)
+### 5.2 Host integration and trust gates (development host implemented; production gates remain)
 
 ```text
 authenticated feature request
@@ -209,8 +216,10 @@ authenticated feature request
   → moderate/schema-check output → persist task/events → settle or reconcile usage
 ```
 
-The library is not a NestJS endpoint, tenant authorizer, image decoder, moderation system, durable
-queue or billing ledger. The API/worker must implement those gates before real user traffic.
+The library itself is not an API, authorizer, image decoder, moderation system or ledger. The new
+`apps/api` development host implements ownership, durable task/event records and a credit-reservation
+ledger with a single-process runner. It does **not** implement the production image/moderation,
+distributed queue, verified-account or actual provider-cost reconciliation gates.
 Clients cannot submit upstream URLs, keys, trusted instructions or arbitrary context pointers.
 
 - Model selection is filtered by plan, feature, capabilities and approved processing terms, including
@@ -297,8 +306,11 @@ metrics stay null with freshness metadata, never inferred as if they were offici
 
 ## 7. API Design (REST)
 
-Planned host API (not implemented routes). Auth via TubePilot bearer session. Naming: `/v1/<resource>`.
-Representative surface:
+Production API design. A subset is now implemented by the development host under `/api/v1`: auth,
+profile, projects, trend bookmarks, tasks/events/cancellation, usage and read-only YouTube linking/sync.
+The connector endpoint/retention matrix is documented separately; the full surface below is
+**not** implemented; consult IMPLEMENTATION_STATUS for current endpoints and external-integration gaps.
+Auth uses opaque app sessions (HttpOnly cookies on web, secure bearer storage on native).
 
 ```
 POST   /v1/auth/signin            POST /v1/auth/signout
@@ -453,20 +465,20 @@ on admin actions; PII masked.
 
 ## 14. Monorepo Layout (implemented foundation + planned applications)
 
-Only the gateway package, root npm/TypeScript setup, tests, CI and documentation currently exist.
-The application/infra directories below are the target layout, not runnable services yet.
+The mobile app, NestJS API, contracts, gateway, tests and CI now exist. Separate workers, admin and
+production infrastructure remain planned. The development runner currently lives in the API process.
 
 ```
 TubePilot-AI/
   package.json         # implemented npm workspaces; build/typecheck/test/check
   .github/workflows/ci.yml # implemented offline gateway checks
   apps/
-    mobile/            # React Native (Expo) client
-    api/               # NestJS gateway + services
-    worker/            # BullMQ workers
+    mobile/            # IMPLEMENTED universal React Native client; Expo + Vite web preview
+    api/               # IMPLEMENTED NestJS development API / SQLite store / task runner
+    worker/            # PLANNED BullMQ workers
     admin/             # admin web (optional)
   packages/
-    contracts/         # shared TS types (API DTOs), zod schemas
+    contracts/         # IMPLEMENTED shared TS DTOs and strict Zod request schemas
     ai-gateway/        # IMPLEMENTED server-only chat/SSE transport + registry + tests
     ui/                # design tokens / shared components
   infra/
@@ -476,14 +488,20 @@ TubePilot-AI/
     PRD.md
     TECHNICAL_ARCHITECTURE.md
     AI_GATEWAY.md      # adopted gateway design, implemented contracts and release gates
+    IMPLEMENTATION_STATUS.md # actual milestone scope, setup and remaining production work
+    YOUTUBE_INTEGRATION.md # read-only connector, operator setup and verification gates
 ```
 
 ---
 
 ## 15. Environments & Deployment
 
-- **Current local verification:** Node 22+, `npm ci`, `npm run check`. Tests use injected mocked
-  providers and no credentials, external inference, database or app server.
+- **Current local app:** Node 22.17+, `npm ci`, `npm run dev`. Vite web preview :3000 proxies relative
+  API requests to NestJS :4000. SQLite state lives in ignored `.data`; no external DB or credentials
+  are required. This is a single-process development setup, not horizontally scalable infrastructure.
+- **Verification:** `npm run check`, `npm run build`, `npm run test:e2e`. API/store tests use isolated
+  SQLite databases; browser tests exercise the running application; no paid inference is invoked.
+  Android and iOS Hermes exports are verified, not native runtime/device/store readiness.
 - **Planned local stack:** Docker Compose (Postgres + Redis + MinIO) + Expo dev build. Any browser
   preview server binds `0.0.0.0`, accepts the preview host, and proxies relative API URLs; browser
   code must not call a sandbox service through localhost.

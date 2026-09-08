@@ -1,0 +1,21 @@
+{
+  "expo": {
+    "name": "TubePilot AI",
+    "slug": "tubepilot-ai",
+    "version": "0.3.0",
+    "scheme": "tubepilot",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "ai.tubepilot.studio"
+    },
+    "android": {
+      "package": "ai.tubepilot.studio"
+    },
+    "plugins": ["expo-secure-store"],
+    "web": {
+      "bundler": "metro"
+    }
+  }
+}

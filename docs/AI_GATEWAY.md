@@ -1,6 +1,6 @@
 # TubePilot AI — AI Gateway System
 
-**Version:** 1.1 · **Date:** 2026-09-08
+**Version:** 1.2 · **Date:** 2026-09-08
 
 **Decision:** Adopt the supplied OpenAI-compatible gateway design, refined for a multi-tenant,
 backend-first creator product. Hugging Face Inference Router is the default upstream:
@@ -8,14 +8,24 @@ backend-first creator product. Hugging Face Inference Router is the default upst
 
 ## 1. Implementation status
 
+**Milestone 0.2 update:** a universal client and NestJS development host now integrate this transport.
+The host has SQLite task/event persistence, ownership checks, cancellation, a credit-reservation
+ledger and an explicitly enabled development provider adapter. Default generation is template-based.
+This does **not** complete the production requirements in this document. See
+[`IMPLEMENTATION_STATUS.md`](./IMPLEMENTATION_STATUS.md) for the runnable app and exact gaps.
+
+**Milestone 0.3 boundary:** the read-only YouTube connector keeps its token vault and API snapshots
+separate from this gateway. It does not automatically copy YouTube data into prompts, embeddings,
+brand context or scoring. See [`YOUTUBE_INTEGRATION.md`](./YOUTUBE_INTEGRATION.md) for current behavior.
+
 | Available in this repository | Still required before a production launch |
 |---|---|
-| Server-only TypeScript package: [`@tubepilot/ai-gateway`](../packages/ai-gateway/) | NestJS controllers, Expo screens and BullMQ worker integration |
+| Server-only TypeScript package: [`@tubepilot/ai-gateway`](../packages/ai-gateway/) | Production verification of the new NestJS/Expo host; separate BullMQ workers |
 | Configured providers, model registry and capability validation | Admin authorization, persistent registry, model health/availability probes |
 | Text and inline raster-image chat payloads | Tenant-authorized asset storage, full image decoding/resizing, malware/content checks |
-| JSON completions and normalized streaming events | Authenticated task/event endpoints, event persistence/replay and moderation before display |
+| JSON completions and normalized streaming events | Production streaming moderation; authenticated persisted task/events are now implemented in the dev host |
 | Per-generation cancellation, deadlines, bounded retries | Distributed cancellation, admission limits and provider circuit breakers |
-| Provider usage counters, typed safe errors, mocked tests | Transactional credit ledger, provider-price snapshots and cost reconciliation |
+| Provider usage counters, typed safe errors, mocked tests | Actual provider-price/usage reconciliation; a conservative reservation ledger exists in the dev host |
 
 This is a **transport foundation**, not a deployed AI service. It does not grant access to YouTube
 metrics, implement billing, guarantee model availability, or make model output trustworthy by itself.
@@ -225,7 +235,7 @@ There is **no automatic cross-provider failover** in this package. Manual model 
 Future failover must preserve capabilities, budget, data-processing consent and actual model attribution;
 it must not splice two models' answers or charge the user twice for the same idempotent task.
 
-## 7. NestJS/worker integration contract (planned, not implemented endpoints)
+## 7. NestJS/worker integration contract (production target; task endpoints implemented in dev host)
 
 | Method / route | Contract |
 |---|---|
@@ -236,7 +246,9 @@ it must not splice two models' answers or charge the user twice for the same ide
 | `POST /v1/ai/tasks/:id/cancel` | Idempotent owner-authorized cancellation propagated to the worker |
 | Admin-only provider/model configuration | Vault secret references, capability probes, validation and audited updates |
 
-Existing idea/script/title endpoints can submit typed tasks internally. Never expose the transport as
+The current host exposes `/api/v1/ai/tasks`, task status/history/events/cancellation and usage. It
+does not yet expose a per-user model catalog or admin configuration endpoints; those table entries
+remain planned. Future idea/script/title endpoints can submit typed tasks internally. Never expose the transport as
 an unrestricted, key-bearing proxy. Every task read, event subscription, cancellation, project and
 attachment lookup must enforce resource ownership—not just a global `user` role.
 
@@ -252,7 +264,7 @@ Until a streaming moderation gate is implemented, buffer the final answer rather
 transport deltas. Clinical/financial/policy-sensitive output and factual research require additional
 review rules; source material cannot authorize agent tool calls or publishing actions.
 
-## 8. Credits, task state and observability (host implementation required)
+## 8. Credits, task state and observability (production requirements; conservative dev ledger exists)
 
 1. Authenticate, authorize assets/context/model and run payload preflight **before** reserving credits.
 2. In one DB transaction, check plan caps and reserve worst-case input/output/attempt cost using a
@@ -279,7 +291,8 @@ Paid subscriptions, autonomous routing and advanced agents can arrive later.
 `npm run check` runs strict TypeScript checks plus Node's built-in test runner with injected fake
 providers. Tests cover routing/configuration, context packing, image limits, malformed responses,
 usage uncertainty, Unicode/SSE boundaries, partial failures, cancellation, deadlines and retries.
-No API keys, network model calls, app server or database are needed for these tests.
+Gateway tests need no API keys, network model calls, app server or database. The wider repository
+now also has isolated SQLite API tests and browser tests; see IMPLEMENTATION_STATUS.
 
 Before enabling real inference:
 
