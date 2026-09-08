@@ -177,6 +177,21 @@ The prebuild step deletes/regenerates the Android directory.
 | Native build fails after an Expo/RN update | Review the prebuild template, SDK catalog and unsigned signing override. Do not silently upload a Metro-dependent debug build. |
 | Google connection fails | Configure the server-side Google project and callback as described in the YouTube guide; packaging the APK does not configure OAuth. |
 
+## Verified GitHub build
+
+The first preview run successfully compiled, aligned, signed, verified and uploaded an actual APK
+in **8 minutes 32 seconds**:
+
+- [Successful build run](https://github.com/dzshowrav/TubePilot-AI/actions/runs/34273826689)
+- [APK artifact](https://github.com/dzshowrav/TubePilot-AI/actions/runs/34273826689/artifacts/10075195600)
+- `TubePilot-AI-0.3.0-preview-arm64-v8a-v1` — approximately 31.3 MB artifact, test-key signed.
+- No backend URL was embedded, so this build uses first-launch server setup.
+
+Artifact links expire according to their retention period; rerun the workflow for a fresh build.
+The regular repository checks also passed on GitHub. Private signing was not exercised because no
+production signing secrets were provided. Installing/testing the APK on a physical device remains
+separate from the successful CI build.
+
 ## Verification boundaries
 
 Local checks validate configuration, origin/session isolation, workflow structure, template modification,

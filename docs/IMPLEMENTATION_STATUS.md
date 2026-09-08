@@ -13,8 +13,11 @@ APKs, signs/verifies them, and uploads build artifacts. It supports test-key pre
 manual private-key signing. First-launch native backend setup works when no API origin is baked in;
 app sessions are now scoped to the exact backend origin. See [ANDROID_APK.md](./ANDROID_APK.md).
 
-Build-helper checks and prebuild validation are separate from an actual Gradle APK run. A private
-signature is not product/store approval; the backend is not bundled or deployed by this workflow.
+The first GitHub Gradle/sign/verify run succeeded and uploaded a test-key-signed arm64 APK. See the
+[build and download links](./ANDROID_APK.md#verified-github-build). The full local suite also includes
+11 Android build/session-isolation checks, for **136 passing tests**. Private signing and physical-device
+validation were not performed; a signature is not product/store approval and the backend is not bundled
+or deployed by this workflow.
 
 ## What works now
 

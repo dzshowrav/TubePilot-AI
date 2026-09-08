@@ -219,7 +219,7 @@ test("GitHub APK workflow keeps private signing separate from compilation and ex
   assert.ok(
     steps.some(
       (step) =>
-        step.uses === "actions/upload-artifact@v4" &&
+        step.uses === "actions/upload-artifact@v7.0.1" &&
         step.with["if-no-files-found"] === "error",
     ),
   );

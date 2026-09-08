@@ -101,8 +101,9 @@ the normal manual **Run workflow** UI requires the definition on the default bra
 - Native entry: `apps/mobile/index.ts` / `App.tsx`, using Expo SDK 57 and React Native 0.86.
   Set `EXPO_PUBLIC_API_URL` to the **HTTPS API/preview origin** (or configure it on first launch), then run
   `npm run start -w @tubepilot/mobile`. A physical device cannot reach the sandbox through its own localhost.
-- Android and iOS Hermes bundles have been exported successfully; these are **not** signed app
-  binaries or physical-device QA.
+- GitHub Actions has successfully built and verified an actual test-key-signed Android APK; see
+  [the APK build guide](docs/ANDROID_APK.md). iOS remains a Hermes bundle export, not a signed IPA.
+  Physical-device, private-signing and store validation remain separate release steps.
 - Default AI: labeled templates. Optional backend-only configuration is documented in
   [`.env.example`](.env.example) and [the implementation guide](docs/IMPLEMENTATION_STATUS.md).
   Live inference requires explicit opt-in, verified model configuration/prices and a hard server budget.
