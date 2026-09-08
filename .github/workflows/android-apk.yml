@@ -1,0 +1,143 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      api_url:
+        description: 'HTTPS TubePilot backend origin (optional for preview; no /api/v1 suffix)'
+        required: false
+        type: string
+        default: ''
+      signing:
+        description: 'preview = public test key; release = your private key (default branch only)'
+        type: choice
+        options: [preview, release]
+        default: preview
+      architecture:
+        description: 'arm64-v8a for most phones; universal for all supported phone/emulator ABIs'
+        type: choice
+        options: [arm64-v8a, universal]
+        default: arm64-v8a
+      version_code:
+        description: 'Optional positive Android version code; defaults to this workflow run number'
+        required: false
+        type: string
+        default: ''
+  push:
+    branches: [main, 'arena/**']
+    paths:
+      - '.github/workflows/android-apk.yml'
+      - 'apps/mobile/**'
+      - 'packages/contracts/**'
+      - 'scripts/android/**'
+      - 'tests/build/**'
+      - 'package.json'
+      - 'package-lock.json'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-apk-${{ github.ref }}-${{ inputs.signing || 'preview' }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
+
+jobs:
+  apk:
+    name: Standalone Android APK
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    # Put private signing secrets ONLY in android-release. Protect it with required
+    # reviewers and a deployment-branch rule allowing your default branch only.
+    environment: ${{ github.event_name == 'workflow_dispatch' && inputs.signing == 'release' && 'android-release' || 'android-preview' }}
+    env:
+      CI: '1'
+      EXPO_NO_DOTENV: '1'
+      TUBEPILOT_APK_BUILD: 'true'
+      NODE_OPTIONS: --max-old-space-size=3072
+      CMAKE_BUILD_PARALLEL_LEVEL: '2'
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Set up Android SDK and licenses
+        uses: android-actions/setup-android@v3
+      - name: Set up Gradle cache
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-disabled: false
+      - name: Install locked dependencies
+        run: npm ci --include=dev
+      - name: Check TypeScript and build helpers
+        run: |
+          npm run typecheck
+          npm run test:android
+      - name: Validate APK configuration
+        id: configuration
+        env:
+          INPUT_API_URL: ${{ inputs.api_url }}
+          REPOSITORY_API_URL: ${{ vars.EXPO_PUBLIC_API_URL }}
+          INPUT_SIGNING: ${{ github.event_name == 'workflow_dispatch' && inputs.signing || 'preview' }}
+          INPUT_ARCHITECTURE: ${{ inputs.architecture || 'arm64-v8a' }}
+          INPUT_VERSION_CODE: ${{ inputs.version_code }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: node scripts/android/config.mjs
+      - name: Check private signing configuration
+        if: env.SIGNING_MODE == 'release'
+        env:
+          SIGNING_CONFIGURED: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' && secrets.ANDROID_KEYSTORE_PASSWORD != '' && secrets.ANDROID_KEY_ALIAS != '' && secrets.ANDROID_KEY_PASSWORD != '' }}
+        run: |
+          if [[ "$SIGNING_CONFIGURED" != true ]]; then
+            echo '::error::Configure all four signing secrets in the protected android-release environment. See docs/ANDROID_APK.md.'
+            exit 1
+          fi
+      - name: Install the SDK versions required by React Native
+        run: |
+          sdkmanager "platform-tools" "platforms;android-$ANDROID_COMPILE_SDK" "build-tools;$ANDROID_BUILD_TOOLS" "ndk;$ANDROID_NDK_VERSION" "cmake;3.22.1"
+      - name: Generate the native Android project
+        working-directory: apps/mobile
+        run: npx expo prebuild --platform android --no-install --clean
+      - name: Build standalone unsigned release APK
+        working-directory: apps/mobile/android
+        env:
+          NODE_ENV: production
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleRelease --no-daemon --no-configuration-cache --no-parallel --max-workers=2 --stacktrace \
+            -PreactNativeArchitectures="$REACT_NATIVE_ARCHITECTURES" \
+            -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=1g"
+      - name: Sign and verify the testing APK
+        if: env.SIGNING_MODE == 'preview'
+        run: bash scripts/android/sign-apk.sh
+      - name: Sign and verify with your private key
+        if: env.SIGNING_MODE == 'release'
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: bash scripts/android/sign-apk.sh
+      - name: Upload APK, checksum and build information
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.configuration.outputs.artifact_name }}
+          path: ${{ runner.temp }}/tubepilot-apk/
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+      - name: Add download link to the run summary
+        env:
+          ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
+        run: printf '\n[Download the APK artifact](%s)\n' "$ARTIFACT_URL" >> "$GITHUB_STEP_SUMMARY"
+      - name: Remove temporary signing material
+        if: always()
+        run: rm -rf -- "${RUNNER_TEMP:?}/tubepilot-signing"

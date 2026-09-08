@@ -14,3 +14,12 @@ test-results/
 playwright-report/
 
 .arena/
+
+# Generated native projects and Android build/signing artifacts
+apps/mobile/android/
+apps/mobile/ios/
+*.apk
+*.aab
+*.jks
+*.keystore
+local.properties

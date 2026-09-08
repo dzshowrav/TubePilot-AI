@@ -1,9 +1,20 @@
-export const baseUrl = "/api/v1";
-export async function sessionHeaders(): Promise<Record<string, string>> {
+export const requestCredentials: RequestCredentials = "include";
+export async function getApiOrigin(): Promise<string> {
+  return window.location.origin;
+}
+export async function getApiBaseUrl(): Promise<string> {
+  return "/api/v1";
+}
+export async function sessionHeaders(
+  _apiBase: string,
+): Promise<Record<string, string>> {
   return {};
 }
-export async function saveToken(_token?: string) {}
+export async function saveToken(_token: string, _apiBase: string) {}
 export async function clearToken() {}
+export async function configureApiOrigin(_input: string) {
+  throw new Error("Web API routing is managed by the server.");
+}
 export async function copyText(text: string) {
   await navigator.clipboard.writeText(text);
 }

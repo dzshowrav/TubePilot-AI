@@ -1,8 +1,14 @@
-import { baseUrl, sessionHeaders } from "./credentials";
+import {
+  getApiBaseUrl,
+  sessionHeaders,
+  saveToken,
+  requestCredentials,
+} from "./credentials";
 export class ApiError extends Error {
   constructor(
     message: string,
     readonly status: number,
+    readonly code?: string,
   ) {
     super(message);
   }
@@ -13,17 +19,19 @@ export async function api<T>(
   body?: unknown,
   extraHeaders: Record<string, string> = {},
 ): Promise<T> {
+  const baseUrl = await getApiBaseUrl();
   if (!baseUrl)
     throw new ApiError(
-      "Set EXPO_PUBLIC_API_URL to your deployed API origin for the native app.",
+      "Connect this app to your deployed TubePilot backend to get started.",
       503,
+      "API_NOT_CONFIGURED",
     );
   const response = await fetch(`${baseUrl}${path}`, {
     method,
-    credentials: "include",
+    credentials: requestCredentials,
     headers: {
       ...(body === undefined ? {} : { "Content-Type": "application/json" }),
-      ...(await sessionHeaders()),
+      ...(await sessionHeaders(baseUrl)),
       ...extraHeaders,
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -36,6 +44,13 @@ export async function api<T>(
       json.message ?? "Something went wrong.",
       response.status,
     );
+  if ((await getApiBaseUrl()) !== baseUrl)
+    throw new ApiError(
+      "The backend changed. Please retry on the selected server.",
+      409,
+    );
+  if (path.startsWith("/auth/") && typeof json.token === "string")
+    await saveToken(json.token, baseUrl);
   return json as T;
 }
 export const requestKey = () =>

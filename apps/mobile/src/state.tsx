@@ -16,7 +16,6 @@ import type {
   Tool,
 } from "@tubepilot/contracts";
 import { api, ApiError } from "./api";
-import { saveToken } from "./credentials";
 import { themes } from "./theme";
 const screens: Screen[] = [
   "overview",
@@ -44,12 +43,14 @@ function useAppState() {
     queryFn: async () => {
       const session = await api<{ authenticated: boolean }>("/auth/session");
       if (!session.authenticated) {
-        const auth = await api<{ token?: string }>("/auth/demo", "POST", {});
-        await saveToken(auth.token);
+        await api("/auth/demo", "POST", {});
       }
       return api<Bootstrap>("/bootstrap");
     },
-    retry: 1,
+    retry: (count, error) =>
+      error instanceof ApiError && error.code === "API_NOT_CONFIGURED"
+        ? false
+        : count < 1,
     staleTime: 30000,
     refetchOnWindowFocus: true,
     refetchInterval: (query) =>

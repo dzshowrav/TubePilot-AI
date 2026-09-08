@@ -20,7 +20,7 @@ import {
 import type { Bootstrap, Profile, ProfileInput } from "@tubepilot/contracts";
 import { useApp, profileFields } from "../state";
 import { api } from "../api";
-import { clearToken, downloadText, saveToken } from "../credentials";
+import { clearToken, downloadText } from "../credentials";
 import {
   Avatar,
   Badge,
@@ -82,7 +82,6 @@ export function Settings() {
   const freshDemo = async () => {
     await clearToken();
     const session = await api<{ token?: string }>("/auth/demo", "POST", {});
-    await saveToken(session.token);
     const boot = await api<Bootstrap>("/bootstrap");
     client.removeQueries({ predicate: (q) => q.queryKey[0] !== "bootstrap" });
     client.setQueryData(["bootstrap"], boot);

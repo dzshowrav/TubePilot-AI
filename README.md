@@ -80,10 +80,26 @@ is for channel linking, **not Google sign-in to your TubePilot account**.
 Backend and browser integration tests use mocks. Real Google project/scope verification and device
 conformance are still required; no live channel was used to validate this milestone.
 
+## Build an Android APK on GitHub
+
+Use **Actions → Build Android APK**. The workflow runs Expo prebuild and Gradle on GitHub, signs and
+verifies the APK, then uploads it with its checksum and build metadata. **No EAS account or Expo token
+is required.** Preview builds use a public test key; privately signed builds use a protected GitHub
+environment and run only from the default branch.
+
+A native APK includes the mobile client, **not the backend**. Supply a public HTTPS API origin in the
+workflow or configure a trusted server on first launch. Native sessions are bound to their issuing
+backend and are cleared when the server changes.
+
+See **[Android APK workflow guide](docs/ANDROID_APK.md)** for the build/download steps, first-run setup,
+private signing secrets, version codes and installation troubleshooting. Before the workflow is merged
+to the default branch, a mobile/build-related push on this Arena branch triggers the preview build;
+the normal manual **Run workflow** UI requires the definition on the default branch.
+
 ## Native and provider configuration
 
 - Native entry: `apps/mobile/index.ts` / `App.tsx`, using Expo SDK 57 and React Native 0.86.
-  Set `EXPO_PUBLIC_API_URL` to the **HTTPS API/preview origin**, then run
+  Set `EXPO_PUBLIC_API_URL` to the **HTTPS API/preview origin** (or configure it on first launch), then run
   `npm run start -w @tubepilot/mobile`. A physical device cannot reach the sandbox through its own localhost.
 - Android and iOS Hermes bundles have been exported successfully; these are **not** signed app
   binaries or physical-device QA.
@@ -100,6 +116,8 @@ apps/mobile/          React Native screens + Vite web preview + Expo native entr
 apps/api/             NestJS API, SQLite store, task runner and integration tests
 packages/contracts/   Shared TypeScript types and strict request schemas
 packages/ai-gateway/   Server-only OpenAI-compatible transport and its unit tests
+scripts/android/      APK configuration, signing and launcher-art generation
+tests/build/          Android workflow/configuration/session-isolation tests
 tests/e2e/            Browser workflow tests
 ```
 
@@ -107,6 +125,7 @@ tests/e2e/            Browser workflow tests
 
 | Document | Purpose |
 |---|---|
+| [`docs/ANDROID_APK.md`](docs/ANDROID_APK.md) | GitHub-hosted APK creation, download, runtime backend setup and signing safeguards. |
 | [`docs/IMPLEMENTATION_STATUS.md`](docs/IMPLEMENTATION_STATUS.md) | What actually works, runtime decisions, setup, testing and outstanding release gates. |
 | [`docs/YOUTUBE_INTEGRATION.md`](docs/YOUTUBE_INTEGRATION.md) | Google Cloud setup, protocol/security design, actual metric coverage, retention and release checks. |
 | [`docs/AI_GATEWAY.md`](docs/AI_GATEWAY.md) | Gateway design, secure configuration, transport contracts and production requirements. |

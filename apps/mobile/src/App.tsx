@@ -1,3 +1,4 @@
+import { NativeBackendSetup } from "./components/native-backend-setup";
 import React, { useEffect } from "react";
 import {
   View,
@@ -324,6 +325,13 @@ function Shell() {
     return () => window.removeEventListener("keydown", listener);
   }, [screen, setModal]);
   if (loading || !data) {
+    if (!loading && error && Platform.OS !== "web")
+      return (
+        <NativeBackendSetup
+          reason={error.message}
+          onConfigured={() => void retry()}
+        />
+      );
     return (
       <View
         style={{

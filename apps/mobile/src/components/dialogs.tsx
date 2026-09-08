@@ -25,7 +25,6 @@ import {
 import type { Bootstrap, ProfileInput, Screen } from "@tubepilot/contracts";
 import { useApp, profileFields } from "../state";
 import { api } from "../api";
-import { saveToken } from "../credentials";
 import {
   Avatar,
   Badge,
@@ -86,7 +85,6 @@ export function AppDialogs() {
         "POST",
         { email, password, ...(authMode === "register" ? { name } : {}) },
       );
-      await saveToken(result.token);
       const bootstrap = await api<Bootstrap>("/bootstrap");
       client.removeQueries({ predicate: (q) => q.queryKey[0] !== "bootstrap" });
       client.setQueryData(["bootstrap"], bootstrap);

@@ -17,8 +17,9 @@
     "typecheck": "npm run build:packages && npm run typecheck --workspaces --if-present",
     "test": "npm run build:packages && npm run test --workspaces --if-present",
     "test:e2e": "playwright test",
-    "check": "npm run typecheck && npm test",
-    "format": "prettier --write \"apps/**/*.{ts,tsx,json,css,html}\" \"packages/contracts/**/*.{ts,json}\" \"tests/e2e/*.ts\" playwright.config.mjs --ignore-path .gitignore"
+    "check": "npm run typecheck && npm test && npm run test:android",
+    "format": "prettier --write \"apps/**/*.{ts,tsx,json,css,html}\" \"packages/contracts/**/*.{ts,json}\" \"tests/e2e/*.ts\" playwright.config.mjs --ignore-path .gitignore",
+    "test:android": "npm run build -w @tubepilot/contracts && node --test tests/build/*.test.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.56.0",
@@ -26,7 +27,8 @@
     "@types/node": "22.20.1",
     "concurrently": "^9.2.1",
     "prettier": "^3.6.2",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "yaml": "^2.9.0"
   },
   "overrides": {
     "xcode": {

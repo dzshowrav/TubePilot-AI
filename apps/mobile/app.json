@@ -11,11 +11,24 @@
       "bundleIdentifier": "ai.tubepilot.studio"
     },
     "android": {
-      "package": "ai.tubepilot.studio"
+      "package": "ai.tubepilot.studio",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-foreground.png",
+        "monochromeImage": "./assets/adaptive-foreground.png",
+        "backgroundColor": "#d2f580"
+      },
+      "allowBackup": false,
+      "blockedPermissions": [
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "plugins": ["expo-secure-store"],
     "web": {
       "bundler": "metro"
-    }
+    },
+    "icon": "./assets/app-icon.png"
   }
 }

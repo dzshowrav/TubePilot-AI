@@ -6,6 +6,16 @@ This file distinguishes implemented behavior from the full 62-feature product vi
 is not 100% complete or production-ready.** A functioning, end-to-end workspace now exists; Google/YouTube linking and a read-only sync path are now implemented, but not live-verified or
 configured by default. Other external integrations and advanced capabilities remain planned.
 
+## Android packaging update — 2026-09-09
+
+A GitHub-hosted APK workflow now generates native Android projects, compiles standalone release-mode
+APKs, signs/verifies them, and uploads build artifacts. It supports test-key previews and protected,
+manual private-key signing. First-launch native backend setup works when no API origin is baked in;
+app sessions are now scoped to the exact backend origin. See [ANDROID_APK.md](./ANDROID_APK.md).
+
+Build-helper checks and prebuild validation are separate from an actual Gradle APK run. A private
+signature is not product/store approval; the backend is not bundled or deployed by this workflow.
+
 ## What works now
 
 | Area | Implemented behavior |
@@ -183,7 +193,8 @@ verification remain production tasks. Google app sign-in is not implemented by c
 - [ ] PostgreSQL migrations, Redis/BullMQ/outbox, leases, distributed cancellation and tenant load tests.
 - [ ] Guest-data expiry, stronger auth/abuse limits, audit logs, backups/restores, observability and alerting.
 - [ ] Controlled deployment pipeline, staging, uptime/performance checks, full accessibility/device QA.
-- [ ] Signed Android/iOS binaries, real device tests and app-store/privacy reviews.
+- [ ] Verify the GitHub Android APK artifact on physical devices; privately signed distribution,
+  iOS binaries and app-store/privacy reviews remain release tasks.
 
 ### Subsequent product phases
 
